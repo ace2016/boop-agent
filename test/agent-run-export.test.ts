@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildAgentRunExport,
+  collectAgentLogs,
   sanitizeAgentLogContent,
   type AgentRunExportSource,
 } from "../server/agent-run-export.js";
@@ -73,11 +74,37 @@ describe("agent run export", () => {
     expect(exported.logs.map((log) => log.type)).toEqual(["tool_use", "tool_result"]);
   });
 
+  it("collects every log page beyond the previous 500 entry limit", async () => {
+    const firstPage = Array.from({ length: 500 }, (_, index) => ({
+      logType: "text",
+      content: `log-${index}`,
+      createdAt: index,
+    }));
+    const secondPage = [{ logType: "text", content: "log-500", createdAt: 500 }];
+    const cursors: Array<string | null> = [];
+
+    const logs = await collectAgentLogs(async (cursor) => {
+      cursors.push(cursor);
+      return cursor === null
+        ? { page: firstPage, isDone: false, continueCursor: "page-2" }
+        : { page: secondPage, isDone: true, continueCursor: "" };
+    });
+
+    expect(logs).toHaveLength(501);
+    expect(logs[500]).toMatchObject({ content: "log-500", createdAt: 500 });
+    expect(cursors).toEqual([null, "page-2"]);
+  });
+
   it("redacts credential-shaped keys recursively in JSON log content", () => {
     const source = JSON.stringify({
       api_key: "top-secret",
+      client_secret: "client-secret",
+      id_token: "identity-token",
+      secret: "generic-secret",
+      token: "generic-token",
       nested: {
         password: "hunter2",
+        privateKey: "private-key",
         safe: "keep me",
         list: [{ access_token: "token-value", query: "hello" }],
       },
@@ -85,8 +112,13 @@ describe("agent run export", () => {
 
     expect(JSON.parse(sanitizeAgentLogContent(source))).toEqual({
       api_key: "[redacted]",
+      client_secret: "[redacted]",
+      id_token: "[redacted]",
+      secret: "[redacted]",
+      token: "[redacted]",
       nested: {
         password: "[redacted]",
+        privateKey: "[redacted]",
         safe: "keep me",
         list: [{ access_token: "[redacted]", query: "hello" }],
       },

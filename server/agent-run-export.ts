@@ -28,7 +28,13 @@ export interface AgentLogExportSource {
   createdAt?: number;
 }
 
-const SENSITIVE_KEY = /^(?:password|passwd|api[_-]?key|access[_-]?token|refresh[_-]?token|authorization|cookie)$/i;
+export interface AgentLogPage {
+  page: AgentLogExportSource[];
+  isDone: boolean;
+  continueCursor: string;
+}
+
+const SENSITIVE_KEY = /^(?:password|passwd|secret|token|api[_-]?key|client[_-]?secret|private[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|auth[_-]?token|authorization|cookie)$/i;
 const REDACTED = "[redacted]";
 
 function sanitizeStructuredValue(value: unknown): unknown {
@@ -51,6 +57,20 @@ export function sanitizeAgentLogContent(content: string): string {
     return JSON.stringify(sanitizeStructuredValue(JSON.parse(content)));
   } catch {
     return content;
+  }
+}
+
+export async function collectAgentLogs(
+  fetchPage: (cursor: string | null) => Promise<AgentLogPage>,
+): Promise<AgentLogExportSource[]> {
+  const logs: AgentLogExportSource[] = [];
+  let cursor: string | null = null;
+
+  while (true) {
+    const page = await fetchPage(cursor);
+    logs.push(...page.page);
+    if (page.isDone) return logs;
+    cursor = page.continueCursor;
   }
 }
 
